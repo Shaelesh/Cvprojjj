@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Pipe Stress Simulator</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body{margin:0;background:#0b0f1a;color:white;font-family:Arial;overflow:hidden}
+
+/* INPUT PAGE */
+#inputPage{display:flex;justify-content:center;align-items:center;height:100vh}
+.card{background:#111827;padding:30px;border-radius:16px;width:300px}
+input{width:100%;padding:8px;margin:8px 0;background:#1f2937;color:white;border:none;border-radius:6px}
+button{width:100%;padding:10px;background:#2563eb;color:white;border:none;border-radius:8px}
+
+/* SIM PAGE */
+#simPage{display:none;height:100vh}
+#layout{display:flex;height:100%}
+
+/* LEFT */
+#left{
+ width:50%;
+ background:#111827;
+ display:flex;
+ flex-direction:column;
+ padding:10px;
+}
+#controls{
+ display:flex;
+ flex-wrap:wrap;
+ gap:10px;
+ font-size:14px;
+}
+#chartContainer{flex:1;position:relative}
+#chart{position:absolute;width:100%!important;height:100%!important}
+
+/* RIGHT */
+#right{width:50%}
+</style>
+</head>
+
+<body>
+
+<!-- INPUT -->
+<div id="inputPage">
+ <div class="card">
+  <h2>Pipe Inputs</h2>
+  Ri <input id="ri" value="50">
+  Thickness <input id="t" value="20">
+  Pi <input id="pi" value="5">
+  Po <input id="po" value="0">
+  <button onclick="startSimulation()">Simulate</button>
+ </div>
+</div>
+
+<!-- SIM -->
+<div id="simPage">
+ <div id="layout">
+
+  <div id="left">
+   <div id="controls">
+    <label><input type="checkbox" value="hoop" checked>Hoop</label>
+    <label><input type="checkbox" value="radial" checked>Radial</label>
+    <label><input type="checkbox" value="axial" checked>Axial</label>
+    <label><input type="checkbox" value="disp" checked>Disp</label>
+   </div>
+
+   <div id="chartContainer">
+    <canvas id="chart"></canvas>
+   </div>
+  </div>
+
+  <div id="right"></div>
+
+ </div>
+</div>
+
+<script>
+
+/* PAGE SWITCH */
+function startSimulation(){
+ document.getElementById("inputPage").style.display="none";
+ document.getElementById("simPage").style.display="block";
+ init3D();
+ runSimulation();
+}
+
+/* THREE */
+let scene,camera,renderer,controls;
+let undeformedMesh,deformedMesh;
+
+function init3D(){
+ scene=new THREE.Scene();
+
+ camera=new THREE.PerspectiveCamera(60,window.innerWidth/2/window.innerHeight,1,10000);
+ camera.position.set(200,200,200);
+
+ renderer=new THREE.WebGLRenderer({antialias:true});
+ renderer.setSize(window.innerWidth/2,window.innerHeight);
+ document.getElementById("right").appendChild(renderer.domElement);
+
+ controls=new THREE.OrbitControls(camera,renderer.domElement);
+
+ scene.add(new THREE.AmbientLight(0xffffff,0.4));
+ let light=new THREE.PointLight(0xffffff,1);
+ light.position.set(200,200,200);
+ scene.add(light);
+}
+
+/* PIPE */
+function createPipe(ri,ro,color,opacity=1){
+
+ let shape=new THREE.Shape();
+ shape.absarc(0,0,ro,0,Math.PI*2,false);
+
+ let hole=new THREE.Path();
+ hole.absarc(0,0,ri,0,Math.PI*2,true);
+ shape.holes.push(hole);
+
+ let geo=new THREE.ExtrudeGeometry(shape,{depth:200,bevelEnabled:false});
+ geo.rotateX(Math.PI/2);
+
+ let mat=new THREE.MeshStandardMaterial({
+  color:color,
+  transparent:opacity<1,
+  opacity:opacity,
+  metalness:0.3,
+  roughness:0.5
+ });
+
+ return new THREE.Mesh(geo,mat);
+}
+
+/* CHART */
+let chart;
+function initChart(){
+ chart=new Chart(document.getElementById('chart'),{
+  type:'line',
+  data:{labels:[],datasets:[]},
+  options:{
+   responsive:true,
+   maintainAspectRatio:false,
+   plugins:{legend:{labels:{color:'white'}}},
+   scales:{x:{ticks:{color:'white'}},y:{ticks:{color:'white'}}}
+  }
+ });
+}
+
+/* SIMULATION */
+let globalData={};
+let targetInner,targetOuter,currentInner,currentOuter,deformProgress;
+
+function runSimulation(){
+
+ let ri=+document.getElementById('ri').value;
+ let t=+document.getElementById('t').value;
+ let pi=+document.getElementById('pi').value;
+ let po=+document.getElementById('po').value;
+
+ let ro=ri+t;
+
+ if(undeformedMesh) scene.remove(undeformedMesh);
+ if(deformedMesh) scene.remove(deformedMesh);
+
+ undeformedMesh=createPipe(ri,ro,0xffffff,0.15);
+ scene.add(undeformedMesh);
+
+ deformedMesh=createPipe(ri,ro,0x3b82f6,1);
+ scene.add(deformedMesh);
+
+ let denom=(ro*ro-ri*ri);
+ let A=(pi*ri*ri - po*ro*ro)/denom;
+ let B=(ri*ri*ro*ro*(po-pi))/denom;
+
+ let E=200000,nu=0.3;
+
+ let ur_inner=((A + B/(ri*ri)) - nu*((A - B/(ri*ri)) + A))/E * ri;
+ let ur_outer=((A + B/(ro*ro)) - nu*((A - B/(ro*ro)) + A))/E * ro;
+
+ const exaggeration = 2000; // 🔥 guaranteed visible
+
+ targetInner = ri + exaggeration * ur_inner;
+ targetOuter = ro + exaggeration * ur_outer;
+
+ currentInner = ri;
+ currentOuter = ro;
+
+ deformProgress = 0;
+
+ updateGraphData(ri,ro,A,B,E,nu);
+}
+
+/* GRAPH */
+function updateGraphData(ri,ro,A,B,E,nu){
+ let labels=[],hoop=[],radial=[],axial=[],disp=[];
+
+ for(let i=0;i<=50;i++){
+  let r=ri+(ro-ri)*(i/50);
+
+  let sh=A+B/(r*r);
+  let sr=A-B/(r*r);
+  let sz=A*nu*2;
+
+  let eh=(sh - nu*(sr+sz))/E;
+  let ur=eh*r;
+
+  labels.push(r.toFixed(2));
+  hoop.push(sh);
+  radial.push(sr);
+  axial.push(sz);
+  disp.push(ur);
+ }
+
+ globalData={labels,hoop,radial,axial,disp};
+ updateGraph();
+}
+
+function updateGraph(){
+ let checks=document.querySelectorAll("input[type=checkbox]:checked");
+ let datasets=[];
+
+ checks.forEach(c=>{
+  if(c.value==="hoop") datasets.push({label:"Hoop",data:globalData.hoop,borderColor:"red"});
+  if(c.value==="radial") datasets.push({label:"Radial",data:globalData.radial,borderColor:"blue"});
+  if(c.value==="axial") datasets.push({label:"Axial",data:globalData.axial,borderColor:"green"});
+  if(c.value==="disp") datasets.push({label:"Disp",data:globalData.disp,borderColor:"purple"});
+ });
+
+ chart.data.labels=globalData.labels;
+ chart.data.datasets=datasets;
+ chart.update();
+}
+
+document.addEventListener("change",updateGraph);
+
+/* 🔥 ANIMATION */
+function animate(){
+ requestAnimationFrame(animate);
+
+ if(deformedMesh && deformProgress < 1){
+
+  deformProgress += 0.02;
+
+  currentInner += (targetInner - currentInner)*0.08;
+  currentOuter += (targetOuter - currentOuter)*0.08;
+
+  scene.remove(deformedMesh);
+  deformedMesh = createPipe(currentInner,currentOuter,0x3b82f6,1);
+
+  let t = deformProgress;
+  deformedMesh.material.color.setRGB(t,0,1-t);
+
+  scene.add(deformedMesh);
+ }
+
+ if(controls) controls.update();
+ if(renderer) renderer.render(scene,camera);
+}
+animate();
+
+initChart();
+
+window.addEventListener('resize',()=>{
+ if(renderer){
+  renderer.setSize(window.innerWidth/2,window.innerHeight);
+  camera.aspect=(window.innerWidth/2)/window.innerHeight;
+  camera.updateProjectionMatrix();
+ }
+});
+</script>
+
+</body>
+</html>	
