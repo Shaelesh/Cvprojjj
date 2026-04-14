@@ -181,7 +181,7 @@ function runSimulation(){
  let ur_inner=((A + B/(ri*ri)) - nu*((A - B/(ri*ri)) + A))/E * ri;
  let ur_outer=((A + B/(ro*ro)) - nu*((A - B/(ro*ro)) + A))/E * ro;
 
- const exaggeration = 2000; // 🔥 guaranteed visible
+ const exaggeration = 2000; // 🔥 garanteed visible
 
  targetInner = ri + exaggeration * ur_inner;
  targetOuter = ro + exaggeration * ur_outer;
@@ -209,8 +209,8 @@ function updateGraphData(ri,ro,A,B,E,nu){
   let ur=eh*r;
 
   labels.push(r.toFixed(2));
-  hoop.push(sh);
-  radial.push(sr);
+  hoop.push(sr);
+  radial.push(sh);
   axial.push(sz);
   disp.push(ur);
  }
